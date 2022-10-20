@@ -43,6 +43,10 @@ import modules.textual_inversion.ui
 import modules.hypernetworks.ui
 import modules.images_history as img_his
 
+import json
+import requests
+import re
+
 # this is a fix for Windows users. Without it, javascript files will be served with text/html content-type and the browser will not show any UI
 mimetypes.init()
 mimetypes.add_type('application/javascript', '.js')
@@ -110,7 +114,7 @@ def image_from_url_text(filedata):
 
     filedata = base64.decodebytes(filedata.encode('utf-8'))
     image = Image.open(io.BytesIO(filedata))
-    return image
+    return filedata
 
 
 def send_gradio_gallery_to_image(x):
@@ -182,6 +186,59 @@ def save_files(js_data, images, do_make_zip, index):
         fullfns.insert(0, zip_filepath)
 
     return gr.File.update(value=fullfns, visible=True), '', '', plaintext_to_html(f"Saved: {filenames[0]}")
+
+
+def send_discord(js_data, images, index, is_post_prompt, is_post_info, is_spoiler):
+    p = json.loads(js_data)
+    image = send_gradio_gallery_to_image(images)
+    webhook_url  = 'https://discord.com/api/webhooks/YOUR_WEBHOOK_URL'
+
+    main_content = {
+        'payload_json': {
+            'username': 'Stable Diffusion',
+            'embeds': [
+                {
+                    'color': 5793266,
+                    'fields': [],
+                }
+            ],
+            'files': []
+        }
+    }
+
+    if is_post_prompt:
+        main_content['payload_json']['embeds'][0]['fields'].append({
+          'name'  : 'Prompt',
+          'value' : p['prompt'],
+        })
+
+    if is_post_info:
+        field = re.sub('<.+>', '', index.split('\n')[1]).replace('Time', ',Time')
+        for i in field.split(','):
+            main_content['payload_json']['embeds'][0]['fields'].append({
+                'name'  : i.split(':')[0],
+                'value' : i.split(':')[1],
+            })
+
+    if is_spoiler:
+        main_content['payload_json']['files'].append({
+            'name': 'SPOILER_SD.png'
+        })
+        files_sd  = {
+            'SPOILER_SD' : ( 'SPOILER_SD.png', image ),
+        }
+    else:
+        main_content['payload_json']['embeds'][0].update({
+            'image': {
+                'url': 'attachment://SD.png'
+            }
+        })
+        files_sd  = {
+          'SD' : ( 'SD.png', image ),
+        }
+
+    main_content['payload_json'] = json.dumps( main_content['payload_json'], ensure_ascii=False )
+    requests.post(webhook_url, files = files_sd  , data = main_content )
 
 
 def save_pil_to_file(pil_image, dir=None):
@@ -661,6 +718,10 @@ def create_ui(wrap_gradio_gpu_call):
 
                 with gr.Column():
                     with gr.Row():
+                        is_post_prompt = gr.Checkbox(label='Post include Prompt', value=True)
+                        is_post_info = gr.Checkbox(label='Post include Info', value=True)
+                        is_spoiler = gr.Checkbox(label='Spoiler Image', value=False)
+                        send_to_discord = gr.Button('Send to Discord')
                         save = gr.Button('Save')
                         send_to_img2img = gr.Button('Send to img2img')
                         send_to_inpaint = gr.Button('Send to inpaint')
@@ -731,6 +792,19 @@ def create_ui(wrap_gradio_gpu_call):
                 fn=lambda x: gr_show(x),
                 inputs=[enable_hr],
                 outputs=[hr_options],
+            )
+
+            send_to_discord.click(
+                fn=send_discord,
+                inputs=[
+                    generation_info,
+                    txt2img_gallery,
+                    html_info,
+                    is_post_prompt,
+                    is_post_info,
+                    is_spoiler
+                ],
+                outputs=[]
             )
 
             save.click(
